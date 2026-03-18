@@ -1,3 +1,134 @@
+# Zotero MCP for Claude with large-document support
+
+This fork adds pagination support to `zotero_item_fulltext` via the parameters `offset` and `chunk_size`, so large PDFs can be retrieved in multiple calls instead of exceeding Claude's MCP tool-result limit. Anthropic recommends pagination for oversized MCP tool results.
+
+## Prerequisites
+
+- Zotero 7 installed and running
+- `uv` installed
+- Claude for Desktop or Cowork installed
+
+## Install `uv`
+
+If `uv --version` already works on your machine, you can skip this section.
+
+A very common macOS installation method is:
+
+```bash
+brew install uv
+```
+
+Official alternatives also include the standalone installer:
+
+```bash
+curl -LsSf https://astral.sh/uv/install.sh | sh
+```
+
+`uv sync` does **not** install `uv` itself. It only creates and syncs the project environment once `uv` is already available on your system.
+
+Verify:
+
+```bash
+uv --version
+```
+
+## Clone and install this fork
+
+```bash
+git clone https://github.com/VladGiurgiu0/zotero-mcp ~/zotero-mcp-patched
+cd ~/zotero-mcp-patched
+uv sync
+```
+
+Verify that the package imports correctly:
+
+```bash
+.venv/bin/python -c "from zotero_mcp import mcp; print('OK')"
+```
+
+## Configure Claude Desktop / Cowork
+
+Open your MCP config file:
+
+- **macOS:** `~/Library/Application\ Support/Claude/claude_desktop_config.json`
+- **Windows:** `%APPDATA%\Claude\claude_desktop_config.json`
+
+Add or replace the `mcpServers` section with:
+
+```json
+{
+  "mcpServers": {
+    "zotero": {
+      "command": "/Users/YOUR_USERNAME/zotero-mcp-patched/.venv/bin/zotero-mcp",
+      "env": {
+        "ZOTERO_LOCAL": "true",
+        "ZOTERO_API_KEY": "",
+        "ZOTERO_LIBRARY_ID": ""
+      }
+    }
+  }
+}
+```
+
+Replace `YOUR_USERNAME` with your local username. You can check it with:
+
+```bash
+whoami
+```
+
+On Windows, adjust the path accordingly.
+
+### Optional: add a Zotero group library
+
+If you also want access to a shared group library, add a second server entry:
+
+```json
+{
+  "mcpServers": {
+    "zotero": {
+      "command": "/Users/YOUR_USERNAME/zotero-mcp-patched/.venv/bin/zotero-mcp",
+      "env": {
+        "ZOTERO_LOCAL": "true",
+        "ZOTERO_API_KEY": "",
+        "ZOTERO_LIBRARY_ID": ""
+      }
+    },
+    "zotero-group": {
+      "command": "/Users/YOUR_USERNAME/zotero-mcp-patched/.venv/bin/zotero-mcp",
+      "env": {
+        "ZOTERO_LOCAL": "true",
+        "ZOTERO_API_KEY": "",
+        "ZOTERO_LIBRARY_ID": "YOUR_GROUP_ID",
+        "ZOTERO_LIBRARY_TYPE": "group"
+      }
+    }
+  }
+}
+```
+
+Replace `YOUR_GROUP_ID` with the numeric Zotero group ID.
+
+## Restart Claude / Cowork
+
+Fully quit and relaunch the app.
+
+You should now have access to:
+
+- `zotero_search_items`
+- `zotero_item_metadata`
+- `zotero_item_fulltext`
+
+In this fork, `zotero_item_fulltext` supports pagination through `offset` and `chunk_size`, which allows large documents to be read safely in multiple tool calls.
+
+## Recommended Claude custom instructions
+
+Paste the following into Claude's custom instructions:
+
+> When I ask about a paper, book, concept, or topic that may be in my research library, always search Zotero first using the available MCP tools before answering from memory or the web. Use `zotero_search_items` with `qmode=everything` for broad searches, and `qmode=titleCreatorYear` when I provide a specific title or author. If a relevant document is found, retrieve its text using `zotero_item_fulltext`. For large documents, paginate automatically with increasing `offset` values and `chunk_size=80000` until the content relevant to my question is found. Only fall back to web search or internal knowledge if the item is not in the library.
+
+
+
+
 # Model Context Protocol server for Zotero
 
 [![GitHub branch status](https://img.shields.io/github/check-runs/kujenga/zotero-mcp/main)](https://github.com/kujenga/zotero-mcp/actions)
