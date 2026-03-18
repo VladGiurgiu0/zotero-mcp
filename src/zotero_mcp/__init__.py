@@ -16,42 +16,32 @@ def format_item(item: dict[str, Any]) -> str:
 
     # Special handling for notes
     if item_type == "note":
-        # Get note content
         note_content = data.get("note", "")
-        # Strip HTML tags for cleaner text (simple approach)
         note_content = (
             note_content.replace("<p>", "").replace("</p>", "\n").replace("<br>", "\n")
         )
         note_content = note_content.replace("<strong>", "**").replace("</strong>", "**")
         note_content = note_content.replace("<em>", "*").replace("</em>", "*")
 
-        # Format note with clear sections
         formatted = [
             "## 📝 Note",
             f"Item Key: `{item_key}`",
         ]
 
-        # Add parent item reference if available
         if parent_item := data.get("parentItem"):
             formatted.append(f"Parent Item: `{parent_item}`")
 
-        # Add date if available
         if date := data.get("dateModified"):
             formatted.append(f"Last Modified: {date}")
 
-        # Add tags with formatting for better visibility
         if tags := data.get("tags"):
             tag_list = [f"`{tag['tag']}`" for tag in tags]
             formatted.append(f"\n### Tags\n{', '.join(tag_list)}")
 
-        # Add note content
         formatted.append(f"\n### Note Content\n{note_content}")
 
         return "\n".join(formatted)
 
-    # Regular item handling (non-notes)
-
-    # Basic metadata with key for easy reference
     formatted = [
         f"## {data.get('title', 'Untitled')}",
         f"Item Key: `{item_key}`",
@@ -59,7 +49,6 @@ def format_item(item: dict[str, Any]) -> str:
         f"Date: {data.get('date', 'No date')}",
     ]
 
-    # Creators with role differentiation
     creators_by_role = {}
     for creator in data.get("creators", []):
         role = creator.get("creatorType", "contributor")
@@ -78,7 +67,6 @@ def format_item(item: dict[str, Any]) -> str:
         role_display = role.capitalize() + ("s" if len(names) > 1 else "")
         formatted.append(f"{role_display}: {'; '.join(names)}")
 
-    # Publication details
     if publication := data.get("publicationTitle"):
         formatted.append(f"Publication: {publication}")
     if volume := data.get("volume"):
@@ -89,16 +77,13 @@ def format_item(item: dict[str, Any]) -> str:
             volume_info += f", Pages: {pages}"
         formatted.append(volume_info)
 
-    # Abstract with clear section header
     if abstract := data.get("abstractNote"):
         formatted.append(f"\n### Abstract\n{abstract}")
 
-    # Tags with formatting for better visibility
     if tags := data.get("tags"):
         tag_list = [f"`{tag['tag']}`" for tag in tags]
         formatted.append(f"\n### Tags\n{', '.join(tag_list)}")
 
-    # URLs, DOIs, and identifiers grouped together
     identifiers = []
     if url := data.get("url"):
         identifiers.append(f"URL: {url}")
@@ -112,7 +97,6 @@ def format_item(item: dict[str, Any]) -> str:
     if identifiers:
         formatted.append("\n### Identifiers\n" + "\n".join(identifiers))
 
-    # Notes and attachments
     if notes := item.get("meta", {}).get("numChildren", 0):
         formatted.append(
             f"\n### Additional Information\nNumber of notes/attachments: {notes}"
@@ -140,46 +124,74 @@ def get_item_metadata(item_key: str) -> str:
 
 @mcp.tool(
     name="zotero_item_fulltext",
-    description="Get the full text content of a Zotero item, given the item key of a parent item or specific attachment.",
+    description=(
+        "Get the full text content of a Zotero item. Supports pagination for large documents "
+        "that exceed the 25k token limit. Use offset=0 first; the response header shows total "
+        "character count and next offset. Call repeatedly with increasing offsets until "
+        "remaining=0. chunk_size max is 80000 chars. "
+        "item_key: parent item or attachment key."
+    ),
 )
-def get_item_fulltext(item_key: str) -> str:
-    """Get the full text content of a specific Zotero item"""
+def get_item_fulltext(
+    item_key: str,
+    offset: int = 0,
+    chunk_size: int = 80000,
+) -> str:
+    """Get the full text content of a specific Zotero item, with optional pagination"""
     zot = get_zotero_client()
+    chunk_size = min(chunk_size, 80000)
 
     try:
         item: Any = zot.item(item_key)
         if not item:
             return f"No item found with key: {item_key}"
 
-        # Fetch full-text content
         attachment = get_attachment_details(zot, item)
 
-        # Prepare header with metadata
         header = format_item(item)
 
-        # Add attachment information
         if attachment is not None:
-            attachment_info = f"\n## Attachment Information\n- **Key**: `{attachment.key}`\n- **Type**: {attachment.content_type}"
+            attachment_info = (
+                f"\n## Attachment Information\n"
+                f"- **Key**: `{attachment.key}`\n"
+                f"- **Type**: {attachment.content_type}"
+            )
 
-            # Get the full text
             full_text_data: Any = zot.fulltext_item(attachment.key)
             if full_text_data and "content" in full_text_data:
-                item_text = full_text_data["content"]
-                # Calculate approximate word count
-                word_count = len(item_text.split())
+                text = full_text_data["content"]
+                word_count = len(text.split())
                 attachment_info += f"\n- **Word Count**: ~{word_count}"
 
-                # Format the content with markdown for structure
-                full_text = f"\n\n## Document Content\n\n{item_text}"
-            else:
-                # Clear error message when text extraction isn't possible
-                full_text = "\n\n## Document Content\n\n[⚠️ Attachment is available but text extraction is not possible. The document may be scanned as images or have other restrictions that prevent text extraction.]"
-        else:
-            attachment_info = "\n\n## Attachment Information\n[❌ No suitable attachment found for full text extraction. This item may not have any attached files or they may not be in a supported format.]"
-            full_text = ""
+                total_chars = len(text)
+                chunk = text[offset:offset + chunk_size]
+                remaining = max(0, total_chars - offset - len(chunk))
 
-        # Combine all sections
-        return f"{header}{attachment_info}{full_text}"
+                if total_chars <= chunk_size and offset == 0:
+                    # Small document — return everything as before
+                    return f"{header}{attachment_info}\n\n## Document Content\n\n{text}"
+
+                # Large document — return chunk with navigation header
+                return (
+                    f"{header}{attachment_info}\n"
+                    f"- **Total chars**: {total_chars} | "
+                    f"**Chunk**: [{offset}:{offset+len(chunk)}] | "
+                    f"**Remaining**: {remaining} | "
+                    f"**Next offset**: {offset+len(chunk)}\n\n"
+                    f"## Document Content (chunk)\n\n{chunk}"
+                )
+            else:
+                return (
+                    f"{header}{attachment_info}\n\n## Document Content\n\n"
+                    "[⚠️ Attachment available but text extraction not possible. "
+                    "Document may be scanned or image-based.]"
+                )
+        else:
+            return (
+                f"{header}\n\n## Attachment Information\n"
+                "[❌ No suitable attachment found. Item may have no attached files "
+                "or they are not in a supported format.]"
+            )
 
     except Exception as e:
         return f"Error retrieving item full text: {str(e)}"
@@ -187,7 +199,6 @@ def get_item_fulltext(item_key: str) -> str:
 
 @mcp.tool(
     name="zotero_search_items",
-    # More detail can be added if useful: https://www.zotero.org/support/dev/web_api/v3/basics#searching
     description="Search for items in your Zotero library, given a query string, query mode (titleCreatorYear or everything), and optional tag search (supports boolean searches). Returned results can be looked up with zotero_item_fulltext or zotero_item_metadata.",
 )
 def search_items(
@@ -199,80 +210,63 @@ def search_items(
     """Search for items in your Zotero library"""
     zot = get_zotero_client()
 
-    # Search using the q parameter
     params = {"q": query, "qmode": qmode, "limit": limit}
     if tag:
         params["tag"] = tag
 
     zot.add_parameters(**params)
-    # n.b. types for this return do not work, it's a parsed JSON object
     results: Any = zot.items()
 
     if not results:
         return "No items found matching your query."
 
-    # Header with search info
     header = [
         f"# Search Results for: '{query}'",
         f"Found {len(results)} items." + (f" Using tag filter: {tag}" if tag else ""),
         "Use item keys with zotero_item_metadata or zotero_item_fulltext for more details.\n",
     ]
 
-    # Format results
     formatted_results = []
     for i, item in enumerate(results):
         data = item["data"]
         item_key = item.get("key", "")
         item_type = data.get("itemType", "unknown")
 
-        # Special handling for notes
         if item_type == "note":
-            # Get note content
             note_content = data.get("note", "")
-            # Strip HTML tags for cleaner text (simple approach)
             note_content = (
                 note_content.replace("<p>", "")
                 .replace("</p>", "\n")
                 .replace("<br>", "\n")
             )
-            note_content = note_content.replace("<strong>", "**").replace(
-                "</strong>", "**"
-            )
+            note_content = note_content.replace("<strong>", "**").replace("</strong>", "**")
             note_content = note_content.replace("<em>", "*").replace("</em>", "*")
 
-            # Extract a title from the first line if possible, otherwise use first few words
             title_preview = ""
             if note_content:
                 lines = note_content.strip().split("\n")
                 first_line = lines[0].strip()
                 if first_line:
-                    # Use first line if it's reasonably short, otherwise use first few words
                     if len(first_line) <= 50:
                         title_preview = first_line
                     else:
                         words = first_line.split()
                         title_preview = " ".join(words[:5]) + "..."
 
-            # Create a good title for the note
             note_title = title_preview if title_preview else "Note"
-
-            # Get a preview of the note content (truncated)
             preview = note_content.strip()
             if len(preview) > 150:
                 preview = preview[:147] + "..."
 
-            # Format the note entry
             entry = [
                 f"## {i + 1}. 📝 {note_title}",
                 f"**Type**: Note | **Key**: `{item_key}`",
                 f"\n{preview}",
             ]
 
-            # Add parent item reference if available
             if parent_item := data.get("parentItem"):
                 entry.insert(2, f"**Parent Item**: `{parent_item}`")
 
-            # Add tags if present (limited to first 5)
             if tags := data.get("tags"):
                 tag_list = [f"`{tag['tag']}`" for tag in tags[:5]]
                 if len(tags) > 5:
@@ -282,11 +276,9 @@ def search_items(
             formatted_results.append("\n".join(entry))
             continue
 
-        # Regular item processing (non-notes)
         title = data.get("title", "Untitled")
         date = data.get("date", "")
 
-        # Format primary creators (limited to first 3)
         creators = []
         for creator in data.get("creators", [])[:3]:
             if "firstName" in creator and "lastName" in creator:
@@ -299,7 +291,6 @@ def search_items(
 
         creator_str = "; ".join(creators) if creators else "No authors"
 
-        # Get publication or source info
         source = ""
         if pub := data.get("publicationTitle"):
             source = pub
@@ -308,12 +299,10 @@ def search_items(
         elif publisher := data.get("publisher"):
             source = f"{publisher}"
 
-        # Get a brief abstract (truncated if too long)
         abstract = data.get("abstractNote", "")
         if len(abstract) > 150:
             abstract = abstract[:147] + "..."
 
-        # Build formatted entry with markdown for better structure
         entry = [
             f"## {i + 1}. {title}",
             f"**Type**: {item_type} | **Date**: {date} | **Key**: `{item_key}`",
@@ -326,7 +315,6 @@ def search_items(
         if abstract:
             entry.append(f"\n{abstract}")
 
-        # Add tags if present (limited to first 5)
         if tags := data.get("tags"):
             tag_list = [f"`{tag['tag']}`" for tag in tags[:5]]
             if len(tags) > 5:
