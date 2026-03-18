@@ -2,35 +2,6 @@
 
 This fork adds pagination support to `zotero_item_fulltext` via the parameters `offset` and `chunk_size`, so large PDFs can be retrieved in multiple calls instead of exceeding Claude's MCP tool-result limit. Anthropic recommends pagination for oversized MCP tool results.
 
-## Prerequisites
-
-- Zotero 7 installed and running
-- `uv` installed
-- Claude for Desktop or Cowork installed
-
-## Install `uv`
-
-If `uv --version` already works on your machine, you can skip this section.
-
-A very common macOS installation method is:
-
-```bash
-brew install uv
-```
-
-Official alternatives also include the standalone installer:
-
-```bash
-curl -LsSf https://astral.sh/uv/install.sh | sh
-```
-
-`uv sync` does **not** install `uv` itself. It only creates and syncs the project environment once `uv` is already available on your system.
-
-Verify:
-
-```bash
-uv --version
-```
 
 ## Clone and install this fork
 
